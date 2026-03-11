@@ -763,7 +763,7 @@ impl Reference {
 
     pub fn new<'a>(text: &'a str, file_name: &'a str) -> impl Iterator<Item = Reference> + 'a {
         static WIKI_LINK_RE: Lazy<Regex> = Lazy::new(|| {
-            Regex::new(r"\[\[(?<filepath>[^\[\]\|\.\#]+)?(\#(?<infileref>[^\[\]\.\|]+))?(?<ending>\.[^\# <>]+)?(\|(?<display>[^\[\]\.\|]+))?\]\]")
+            Regex::new(r"\[\[(?<filepath>[^\[\]\|\#]+?)?(?<ending>\.(?:md|canvas|pdf|png|jpe?g|gif|svg|webp|avif|bmp|tiff?|flac|m4a|mp3|ogg|wav|webm|3gp|mkv|mov|mp4|ogv))?(\#(?<infileref>[^\[\]\|]+))?(\|(?<display>[^\[\]\|]+))?\]\]")
 
                 .unwrap()
         }); // A [[link]] that does not have any [ or ] in it
@@ -2137,10 +2137,162 @@ mod vault_tests {
 
     #[test]
     fn link_parsing_with_png() {
+        // [[link.png]] is filtered out because it has a .png extension (not .md)
+        // [[link|display.png]] is valid: filepath is "link" (no extension), display text is "display.png"
         let text = "This is a png [[link.png]] [[link|display.png]]";
         let parsed = Reference::new(text, "test.md").collect_vec();
 
-        assert_eq!(parsed, vec![])
+        let expected = vec![WikiFileLink(ReferenceData {
+            reference_text: "link".into(),
+            range: tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 27,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 47,
+                },
+            }
+            .into(),
+            display_text: Some("display.png".into()),
+        })];
+
+        assert_eq!(parsed, expected)
+    }
+
+    #[test]
+    fn wiki_link_parsing_with_dots_in_filename() {
+        let text = "This is [[a.s.o.]] and [[link.to.this]]";
+        let parsed = Reference::new(text, "test.md").collect_vec();
+
+        let expected = vec![
+            WikiFileLink(ReferenceData {
+                reference_text: "a.s.o.".into(),
+                range: tower_lsp::lsp_types::Range {
+                    start: tower_lsp::lsp_types::Position {
+                        line: 0,
+                        character: 8,
+                    },
+                    end: tower_lsp::lsp_types::Position {
+                        line: 0,
+                        character: 18,
+                    },
+                }
+                .into(),
+                ..ReferenceData::default()
+            }),
+            WikiFileLink(ReferenceData {
+                reference_text: "link.to.this".into(),
+                range: tower_lsp::lsp_types::Range {
+                    start: tower_lsp::lsp_types::Position {
+                        line: 0,
+                        character: 23,
+                    },
+                    end: tower_lsp::lsp_types::Position {
+                        line: 0,
+                        character: 39,
+                    },
+                }
+                .into(),
+                ..ReferenceData::default()
+            }),
+        ];
+
+        assert_eq!(parsed, expected)
+    }
+
+    #[test]
+    fn wiki_link_parsing_dots_with_md_extension() {
+        let text = "Link [[dotted.name.md]]";
+        let parsed = Reference::new(text, "test.md").collect_vec();
+
+        let expected = vec![WikiFileLink(ReferenceData {
+            reference_text: "dotted.name".into(),
+            range: tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 5,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 23,
+                },
+            }
+            .into(),
+            ..ReferenceData::default()
+        })];
+
+        assert_eq!(parsed, expected)
+    }
+
+    #[test]
+    fn wiki_link_parsing_dots_with_heading() {
+        let text = "Link [[a.b.c#heading]]";
+        let parsed = Reference::new(text, "test.md").collect_vec();
+
+        let expected = vec![WikiHeadingLink(
+            ReferenceData {
+                reference_text: "a.b.c#heading".into(),
+                range: tower_lsp::lsp_types::Range {
+                    start: tower_lsp::lsp_types::Position {
+                        line: 0,
+                        character: 5,
+                    },
+                    end: tower_lsp::lsp_types::Position {
+                        line: 0,
+                        character: 22,
+                    },
+                }
+                .into(),
+                ..ReferenceData::default()
+            },
+            "a.b.c".into(),
+            "heading".into(),
+        )];
+
+        assert_eq!(parsed, expected)
+    }
+
+    #[test]
+    fn wiki_link_parsing_consecutive_dotted_links() {
+        let text = "[[a.b]][[c.d]]";
+        let parsed = Reference::new(text, "test.md").collect_vec();
+
+        let expected = vec![
+            WikiFileLink(ReferenceData {
+                reference_text: "a.b".into(),
+                range: tower_lsp::lsp_types::Range {
+                    start: tower_lsp::lsp_types::Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: tower_lsp::lsp_types::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                }
+                .into(),
+                ..ReferenceData::default()
+            }),
+            WikiFileLink(ReferenceData {
+                reference_text: "c.d".into(),
+                range: tower_lsp::lsp_types::Range {
+                    start: tower_lsp::lsp_types::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                    end: tower_lsp::lsp_types::Position {
+                        line: 0,
+                        character: 14,
+                    },
+                }
+                .into(),
+                ..ReferenceData::default()
+            }),
+        ];
+
+        assert_eq!(parsed, expected)
     }
 
     #[test]
